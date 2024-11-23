@@ -1,66 +1,48 @@
+import os
 from fastapi import FastAPI, HTTPException, Form
+from fastapi.responses import StreamingResponse
 from fastapi.middleware.cors import CORSMiddleware
-from azure.cognitiveservices.speech import SpeechConfig, SpeechSynthesizer, AudioConfig
-from azure.storage.blob import BlobServiceClient
-import uuid
-
-from dotenv import load_dotenv
-
-load_dotenv()
-AZURE_STORAGE_CONNECTION_STRING = os.getenv("AZURE_STORAGE_CONNECTION_STRING")
-
-
-
+import pyttsx3
+import io
 
 app = FastAPI()
 
-# CORS Configuration
-origins = [
-    "http://localhost:8888",
-    "https://admirable-smakager-729141.netlify.app",
-]
-
+# Add CORS middleware
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=origins,
+    allow_origins=["http://localhost:8888", "https://admirable-smakager-729141.netlify.app"],
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
 )
 
-# Azure Speech Service Config
-SPEECH_KEY = "2L2Z57u9OKgtjcOlmDhvWyyzsSAOawiU5x7Vmasy3UNL36QEuAvBJQQJ99AKAC3pKaRXJ3w3AAAYACOGcCJK"
-SERVICE_REGION = "eastasia"
-speech_config = SpeechConfig(subscription=SPEECH_KEY, region=SERVICE_REGION)
-
-# Azure Blob Storage Config
-BLOB_CONTAINER_NAME = "$logs"  # Create a container in your Storage Account
-
-blob_service_client = BlobServiceClient.from_connection_string(AZURE_STORAGE_CONNECTION_STRING)
-container_client = blob_service_client.get_container_client(BLOB_CONTAINER_NAME)
+# Get the project root folder
+project_root = os.path.dirname(os.path.abspath(__file__))
 
 @app.post("/generate-audio/")
 async def generate_audio(text: str = Form(...)):
     try:
-        # Generate a unique filename for the MP3 file
-        file_name = f"{uuid.uuid4()}.mp3"
-        local_file_path = f"/tmp/{file_name}"  # Temporary file storage on the server
+        if not text.strip():
+            raise HTTPException(status_code=400, detail="Text is required")
 
-        # Configure Azure Speech Synthesizer to save the file locally
-        audio_output = AudioConfig(filename=local_file_path)
-        synthesizer = SpeechSynthesizer(speech_config=speech_config, audio_config=audio_output)
+        # Initialize pyttsx3 for text-to-speech
+        engine = pyttsx3.init()
 
-        # Generate Speech
-        synthesizer.speak_text_async(text).get()
+        # Path to save the audio file in the project root
+        output_file_path = os.path.join(project_root, "output.mp3")
 
-        # Upload the file to Azure Blob Storage
-        with open(local_file_path, "rb") as data:
-            blob_client = container_client.get_blob_client(file_name)
-            blob_client.upload_blob(data, overwrite=True)
+        # Save speech to the output.mp3 file
+        engine.save_to_file(text, output_file_path)
+        engine.runAndWait()
 
-        # Generate a SAS (Shared Access Signature) URL for the uploaded file
-        download_url = f"https://{blob_service_client.account_name}.blob.core.windows.net/{BLOB_CONTAINER_NAME}/{file_name}"
+        # Read the audio file content
+        with open(output_file_path, "rb") as audio_file:
+            audio_content = audio_file.read()
 
-        return {"message": "Audio generated successfully.", "download_url": download_url}
+        # Return the audio as a downloadable file
+        return StreamingResponse(io.BytesIO(audio_content), media_type="audio/mp3", headers={
+            "Content-Disposition": f"attachment; filename=output.mp3"
+        })
+
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
