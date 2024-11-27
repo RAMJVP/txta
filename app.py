@@ -1,11 +1,14 @@
 import os
 import io
 from time import time
-from fastapi import FastAPI, HTTPException, Form, BackgroundTasks
+from fastapi import FastAPI, HTTPException, Form, BackgroundTasks,File, UploadFile
 from fastapi.responses import StreamingResponse
 from fastapi.middleware.cors import CORSMiddleware
 from gtts import gTTS
 from threading import Lock
+from ocr_service import extract_text_from_image
+
+
 
 # Initialize FastAPI app
 app = FastAPI()
@@ -81,3 +84,18 @@ async def generate_audio(device_id: str = Form(...), text: str = Form(...), back
         )
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Error processing your request: {e}")
+
+
+
+
+@app.post("/extract-text/")
+async def extract_text(file: UploadFile = File(...)):
+    # Validate file type
+    if file.content_type not in ["image/jpeg", "image/png", "image/gif", "application/pdf", "image/heic"]:
+        raise HTTPException(status_code=400, detail="Unsupported file type.")
+    
+    try:
+        text = extract_text_from_image(file)
+        return {"text": text}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to extract text: {e}")
