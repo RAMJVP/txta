@@ -9,5 +9,5 @@ COPY requirements.txt .
 RUN pip install -r requirements.txt
 COPY . .
 
-# Command to run the application using Uvicorn
-CMD ["uvicorn", "niftys:app", "--host", "0.0.0.0", "--port", "8000", "--reload"]
+# Command to run the unified app
+CMD ["uvicorn", "app:app", "--host", "0.0.0.0", "--port", "8000", "--reload"]
