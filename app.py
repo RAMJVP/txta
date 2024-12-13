@@ -7,7 +7,6 @@ from fastapi.middleware.cors import CORSMiddleware
 from gtts import gTTS
 from threading import Lock
 import yfinance as yf
-import requests
 from bs4 import BeautifulSoup
 
 # Initialize FastAPI app
@@ -30,7 +29,6 @@ lock = Lock()
 REQUEST_LIMIT_TIME = 86400  # 24 hours in seconds
 AUDIO_EXPIRY_TIME = 1800    # 30 minutes in seconds
 
-
 def cleanup_audio_file(file_path: str):
     """Delete audio file after expiry."""
     try:
@@ -44,64 +42,78 @@ def cleanup_audio_file(file_path: str):
     except Exception as e:
         print(f"Error: Unable to delete file {file_path}. Error: {e}")
 
-
-# === Audio Generation Endpoint ===
+# === Audio Generation Endpoint (English) ===
 @app.post("/generate-audio/")
 async def generate_audio(device_id: str = Form(...), text: str = Form(...), background_tasks: BackgroundTasks = BackgroundTasks()):
     if not device_id.strip():
         raise HTTPException(status_code=400, detail="Device ID is required")
     if not text.strip():
         raise HTTPException(status_code=400, detail="Text is required")
-    
+
     with lock:
         current_time = time()
         if device_id in request_db:
             last_request_time = request_db[device_id]["timestamp"]
             if current_time - last_request_time < REQUEST_LIMIT_TIME:
                 raise HTTPException(status_code=429, detail="Only one request is allowed per device per day.")
-        
-        # Update request tracking
         request_db[device_id] = {"timestamp": current_time}
 
     try:
-        # Generate audio file
         tts = gTTS(text)
         audio_file = f"{device_id}_{int(current_time)}.mp3"
         audio_path = os.path.join("temp_audio", audio_file)
-
-        # Ensure temp_audio directory exists
         os.makedirs("temp_audio", exist_ok=True)
         tts.save(audio_path)
-
-        # Schedule file cleanup after expiry
         background_tasks.add_task(cleanup_audio_file, audio_path)
-
-        # Stream the audio file to the user
         return StreamingResponse(
             open(audio_path, "rb"),
             media_type="audio/mpeg",
-            headers={
-                "Content-Disposition": f"attachment; filename={audio_file}"
-            },
+            headers={"Content-Disposition": f"attachment; filename={audio_file}"},
         )
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Error processing your request: {e}")
 
+# === Audio Generation Endpoint (Hindi) ===
+@app.post("/generate-audio-hin/")
+async def generate_audioHindi(device_id: str = Form(...), text: str = Form(...), background_tasks: BackgroundTasks = BackgroundTasks()):
+    if not device_id.strip():
+        raise HTTPException(status_code=400, detail="Device ID is required")
+    if not text.strip():
+        raise HTTPException(status_code=400, detail="Text is required")
+
+    with lock:
+        current_time = time()
+        if device_id in request_db:
+            last_request_time = request_db[device_id]["timestamp"]
+            if current_time - last_request_time < REQUEST_LIMIT_TIME:
+                raise HTTPException(status_code=429, detail="Only one request is allowed per device per day.")
+        request_db[device_id] = {"timestamp": current_time}
+
+    try:
+        tts = gTTS(text, lang='hi')
+        audio_file = f"{device_id}_{int(current_time)}.mp3"
+        audio_path = os.path.join("temp_audio", audio_file)
+        os.makedirs("temp_audio", exist_ok=True)
+        tts.save(audio_path)
+        background_tasks.add_task(cleanup_audio_file, audio_path)
+        return StreamingResponse(
+            open(audio_path, "rb"),
+            media_type="audio/mpeg",
+            headers={"Content-Disposition": f"attachment; filename={audio_file}"},
+        )
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Error processing your request: {e}")
 
 # === Text Extraction Endpoint ===
 @app.post("/extract-text/")
 async def extract_text(file: UploadFile = File(...)):
-    # Validate file type
     if file.content_type not in ["image/jpeg", "image/png", "image/gif", "application/pdf", "image/heic"]:
         raise HTTPException(status_code=400, detail="Unsupported file type.")
-    
     try:
-        # Dummy text extraction logic; replace with actual implementation
         text = f"Extracted text from {file.filename}"
         return {"text": text}
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Failed to extract text: {e}")
-
 
 # === Financial Data Endpoints ===
 def fetch_nifty_index():
@@ -134,7 +146,6 @@ async def get_financial_data():
         raise e
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"An unexpected error occurred: {e}")
-
 
 @app.get("/debug/routes")
 async def list_routes():
