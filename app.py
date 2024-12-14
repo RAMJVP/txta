@@ -83,11 +83,7 @@ async def generate_audioHindi(device_id: str = Form(...), text: str = Form(...),
 
     with lock:
         current_time = time()
-        if device_id in request_db:
-            last_request_time = request_db[device_id]["timestamp"]
-            if current_time - last_request_time < REQUEST_LIMIT_TIME:
-                raise HTTPException(status_code=429, detail="Only one request is allowed per device per day.")
-        request_db[device_id] = {"timestamp": current_time}
+    
 
     try:
         tts = gTTS(text, lang='hi')
