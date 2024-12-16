@@ -8,6 +8,7 @@ from gtts import gTTS
 from threading import Lock
 import yfinance as yf
 from bs4 import BeautifulSoup
+from ocr_service import extract_text_from_image
 
 # Initialize FastAPI app
 app = FastAPI()
@@ -103,13 +104,17 @@ async def generate_audioHindi(device_id: str = Form(...), text: str = Form(...),
 # === Text Extraction Endpoint ===
 @app.post("/extract-text/")
 async def extract_text(file: UploadFile = File(...)):
+    # Validate file type
     if file.content_type not in ["image/jpeg", "image/png", "image/gif", "application/pdf", "image/heic"]:
         raise HTTPException(status_code=400, detail="Unsupported file type.")
+    
     try:
-        text = f"Extracted text from {file.filename}"
+        text = extract_text_from_image(file)
         return {"text": text}
     except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Failed to extract text: {e}")
+        raise HTTPException(status_code=500, detail=f"Failed to extract text: {e}")        
+        
+        
 
 # === Financial Data Endpoints ===
 def fetch_nifty_index():
