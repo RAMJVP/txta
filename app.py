@@ -9,6 +9,8 @@ import yfinance as yf
 from pymongo import MongoClient
 import shortuuid
 from ocr_service import extract_text_from_image
+from PyPDF2 import PdfReader  # Add this import for PDF processing
+
 
 # Initialize FastAPI app
 app = FastAPI()
@@ -180,3 +182,33 @@ async def redirect_to_long_url(short_url: str):
 @app.get("/debug/routes/")
 async def list_routes():
     return [{"path": route.path, "name": route.name} for route in app.router.routes]
+
+
+
+@app.post("/pdf-to-text/")
+async def pdf_to_text(file: UploadFile = File(...)):
+    """Extract text from an uploaded PDF file."""
+    if file.content_type != "application/pdf":
+        raise HTTPException(status_code=400, detail="Unsupported file type. Please upload a PDF.")
+
+    try:
+        # Save the uploaded PDF file temporarily
+        temp_pdf_path = f"temp_{file.filename}"
+        with open(temp_pdf_path, "wb") as temp_pdf_file:
+            temp_pdf_file.write(await file.read())
+
+        # Extract text from the PDF
+        pdf_reader = PdfReader(temp_pdf_path)
+        extracted_text = "\n".join([page.extract_text() for page in pdf_reader.pages if page.extract_text()])
+
+        # Clean up temporary file
+        os.remove(temp_pdf_path)
+
+        # Return the extracted text as a plain text file
+        return StreamingResponse(
+            iter([extracted_text.encode("utf-8")]),
+            media_type="text/plain",
+            headers={"Content-Disposition": f"attachment; filename=extracted_text.txt"},
+        )
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to process PDF: {e}")
