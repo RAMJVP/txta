@@ -169,7 +169,7 @@ async def shorten_url(request: Request):
         short_url = generate_short_url()
 
     url_collection.insert_one({"long_url": longUrl, "short_url": short_url})
-    return {"shortUrl": f"http://localhost:8000/{short_url}"}
+    return {"shortUrl": f"https://admirable-smakager-729141.netlify.app/{short_url}"}
 
 @app.get("/{short_url}")
 async def redirect_to_long_url(short_url: str):
