@@ -154,29 +154,53 @@ async def get_financial_data():
 
 @app.post("/shorten")
 async def shorten_url(request: Request):
-    data = await request.json()
-    longUrl = data.get("longUrl")
-    alias = data.get("alias")
+    try:
+        data = await request.json()
+        print("Received request data:", data)
 
-    if not longUrl:
-        raise HTTPException(status_code=400, detail="Long URL is required.")
+        longUrl = data.get("longUrl")
+        alias = data.get("alias")
 
-    if alias:
-        if url_collection.find_one({"short_url": alias}):
-            raise HTTPException(status_code=400, detail="Custom alias is already taken.")
-        short_url = alias
-    else:
-        short_url = generate_short_url()
+        if not longUrl:
+            print("Error: Long URL is required.")
+            raise HTTPException(status_code=400, detail="Long URL is required.")
 
-    url_collection.insert_one({"long_url": longUrl, "short_url": short_url})
-    return {"shortUrl": f"https://admirable-smakager-729141.netlify.app/{short_url}"}
+        if alias:
+            print(f"Checking availability of custom alias: {alias}")
+            if url_collection.find_one({"short_url": alias}):
+                print("Error: Custom alias is already taken.")
+                raise HTTPException(status_code=400, detail="Custom alias is already taken.")
+            short_url = alias
+        else:
+            short_url = generate_short_url()
+            print(f"Generated short URL: {short_url}")
+
+        # Insert into database
+        url_collection.insert_one({"long_url": longUrl, "short_url": short_url})
+        print(f"Inserted into DB: long_url={longUrl}, short_url={short_url}")
+        return {"shortUrl": f"https://admirable-smakager-729141.netlify.app/{short_url}"}
+    except Exception as e:
+        print("Error in shorten_url:", str(e))
+        raise HTTPException(status_code=500, detail="Internal Server Error")
 
 @app.get("/{short_url}")
 async def redirect_to_long_url(short_url: str):
-    result = url_collection.find_one({"short_url": short_url})
-    if not result:
-        raise HTTPException(status_code=404, detail="Short URL not found.")
-    return RedirectResponse(url=result["long_url"])
+    try:
+        print(f"Looking up short URL: {short_url}")
+        result = url_collection.find_one({"short_url": short_url})
+        if not result:
+            print(f"Error: Short URL not found for {short_url}")
+            raise HTTPException(status_code=404, detail="Short URL not found.")
+
+        long_url = result["long_url"]
+        print(f"Redirecting to long URL: {long_url}")
+        return RedirectResponse(url=long_url)
+    except Exception as e:
+        print("Error in redirect_to_long_url:", str(e))
+        raise HTTPException(status_code=500, detail="Internal Server Error")
+        
+        
+        
 
 # === Debug Routes Endpoint ===
 @app.get("/debug/routes/")
