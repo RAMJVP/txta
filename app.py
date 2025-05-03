@@ -1,6 +1,6 @@
 import os
 from time import time
-from fastapi import FastAPI, HTTPException, Form, BackgroundTasks, File, UploadFile, Request
+from fastapi import FastAPI, HTTPException, Form, BackgroundTasks, File, UploadFile, Request, Query
 from fastapi.responses import StreamingResponse, RedirectResponse
 from fastapi.middleware.cors import CORSMiddleware
 from gtts import gTTS
@@ -10,7 +10,11 @@ from pymongo import MongoClient
 import shortuuid
 from ocr_service import extract_text_from_image
 from PyPDF2 import PdfReader  # Add this import for PDF processing
+from typing import List
+from datetime import datetime
 
+
+from kiteconnect import KiteConnect
 
 # Initialize FastAPI app
 app = FastAPI()
@@ -183,24 +187,6 @@ async def shorten_url(request: Request):
         print("Error in shorten_url:", str(e))
         raise HTTPException(status_code=500, detail="Internal Server Error")
 
-@app.get("/{short_url}")
-async def redirect_to_long_url(short_url: str):
-    try:
-        print(f"Looking up short URL: {short_url}")
-        result = url_collection.find_one({"short_url": short_url})
-        if not result:
-            print(f"Error: Short URL not found for {short_url}")
-            raise HTTPException(status_code=404, detail="Short URL not found.")
-
-        long_url = result["long_url"]
-        print(f"Redirecting to long URL: {long_url}")
-        return RedirectResponse(url=long_url)
-    except Exception as e:
-        print("Error in redirect_to_long_url:", str(e))
-        raise HTTPException(status_code=500, detail="Internal Server Error")
-        
-        
-        
 
 # === Debug Routes Endpoint ===
 @app.get("/debug/routes/")
@@ -236,3 +222,108 @@ async def pdf_to_text(file: UploadFile = File(...)):
         )
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Failed to process PDF: {e}")
+        
+        
+        
+        
+@app.get("/preorderstocks")
+async def preorder_stocks(current_time: str = Query(default=datetime.now().strftime('%H:%M'))):
+    if not ("09:00" <= current_time <= "09:15"):
+        return {"status": "outside_preorder_time", "message": "This API only works between 09:00 and 09:15"}
+
+    if not access_token_global:
+        raise HTTPException(status_code=401, detail="Please authenticate first via /login")
+
+    try:
+        # Sample list of quality stocks
+        symbols = ["RELIANCE", "TCS", "INFY", "HDFCBANK", "ICICIBANK"]
+        exchange = "NSE"
+
+        instrument_tokens = [f"{exchange}:{sym}" for sym in symbols]
+        quotes = kite.quote(instrument_tokens)
+
+        result = []
+        for token in instrument_tokens:
+            data = quotes[token]
+            depth = data.get("depth", {})
+            buy_orders = depth.get("buy", [])
+            sell_orders = depth.get("sell", [])
+
+            if not buy_orders or not sell_orders:
+                continue
+
+            top_buy = buy_orders[0]
+            top_sell = sell_orders[0]
+
+            buy_price = top_buy["price"]
+            buy_qty = top_buy["quantity"]
+            sell_price = top_sell["price"]
+            sell_qty = top_sell["quantity"]
+
+            price_diff = sell_price - buy_price
+            price_diff_percent = (price_diff / buy_price) * 100
+
+            if buy_qty > sell_qty and price_diff_percent >= 1:
+                result.append({
+                    "symbol": token,
+                    "buy_price": buy_price,
+                    "buy_qty": buy_qty,
+                    "sell_price": sell_price,
+                    "sell_qty": sell_qty,
+                    "price_diff_percent": round(price_diff_percent, 2)
+                })
+
+        return {
+            "status": "success",
+            "stocks": result,
+            "timestamp": current_time
+        }
+
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to fetch stock data: {e}")
+
+
+        
+
+
+API_KEY = "n6b5ozc4aoq2dfp9"          # replace with actual
+API_SECRET = "dq9sbkgnlwt2qk52kfrbii7e1h5s19by"    # replace with actual
+
+kite = KiteConnect(api_key=API_KEY)
+access_token_global = None
+
+@app.get("/login")
+def login_redirect():
+    login_url = kite.login_url()
+    return {"login_url": login_url}
+
+@app.get("/login/callback")
+def login_callback(request_token: str):
+    global access_token_global
+    try:
+        data = kite.generate_session(request_token, api_secret=API_SECRET)
+        access_token_global = data["access_token"]
+        kite.set_access_token(access_token_global)
+        return {"message": "Login successful", "access_token": access_token_global}
+    except Exception as e:
+        return {"error": str(e)}
+
+
+
+
+@app.get("/{short_url}")
+async def redirect_to_long_url(short_url: str):
+    try:
+        print(f"Looking up short URL: {short_url}")
+        result = url_collection.find_one({"short_url": short_url})
+        if not result:
+            print(f"Error: Short URL not found for {short_url}")
+            raise HTTPException(status_code=404, detail="Short URL not found.")
+
+        long_url = result["long_url"]
+        print(f"Redirecting to long URL: {long_url}")
+        return RedirectResponse(url=long_url)
+    except Exception as e:
+        print("Error in redirect_to_long_url:", str(e))
+        raise HTTPException(status_code=500, detail="Internal Server Error")
+        
