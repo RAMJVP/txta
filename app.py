@@ -14,6 +14,12 @@ from typing import List
 from datetime import datetime
 
 
+
+import requests
+
+app = FastAPI()
+
+
 from kiteconnect import KiteConnect
 
 # Initialize FastAPI app
@@ -308,6 +314,24 @@ def login_callback(request_token: str):
     except Exception as e:
         return {"error": str(e)}
 
+
+
+
+
+
+@app.post("/generate-hindi-audio/")
+async def generate_hindi_audio(request: Request):
+    body = await request.json()
+    response = requests.post(
+        "https://audio.dubverse.ai/api/tts",
+        headers={
+            "Content-Type": "application/json",
+            "X-API-Key": "DQOaqGwPE3ekDeNIocrtty3vKpuQd4dP"
+        },
+        json=body,
+        stream=True
+    )
+    return StreamingResponse(response.raw, media_type="audio/mpeg")
 
 
 
