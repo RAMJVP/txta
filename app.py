@@ -12,12 +12,29 @@ from ocr_service import extract_text_from_image
 from PyPDF2 import PdfReader  # Add this import for PDF processing
 from typing import List
 from datetime import datetime
+from zoneinfo import ZoneInfo
 
+from pydantic import BaseModel
+from typing import Literal
+import pandas as pd
 
 
 import requests
 
 app = FastAPI()
+
+
+
+class InputData(BaseModel):
+    nifty: float
+    rsi: float
+    vix: float
+
+class OutputData(BaseModel):
+    signal: Literal["BUY CE", "BUY PE", "STRADDLE", "AVOID"]
+    confidence: float
+    reason: str
+
 
 
 from kiteconnect import KiteConnect
@@ -234,8 +251,14 @@ async def pdf_to_text(file: UploadFile = File(...)):
         
 @app.get("/preorderstocks")
 async def preorder_stocks(current_time: str = Query(default=datetime.now().strftime('%H:%M'))):
-    if not ("09:00" <= current_time <= "09:15"):
-        return {"status": "outside_preorder_time", "message": "This API only works between 09:00 and 09:15"}
+    
+      # Get current time in IST
+    ist_now = datetime.now(ZoneInfo("Asia/Kolkata")).strftime('%H:%M')
+
+   # if not ("09:00" <= ist_now <= "09:15"):
+      #  return {"status": "outside_preorder_time", "message": "This API only works between 09:00 and 09:15"}
+
+    
 
     if not access_token_global:
         raise HTTPException(status_code=401, detail="Please authenticate first via /login")
@@ -282,7 +305,7 @@ async def preorder_stocks(current_time: str = Query(default=datetime.now().strft
         return {
             "status": "success",
             "stocks": result,
-            "timestamp": current_time
+            "timestamp": ist_now
         }
 
     except Exception as e:
@@ -314,6 +337,62 @@ def login_callback(request_token: str):
     except Exception as e:
         return {"error": str(e)}
 
+
+@app.get("/api/indicators")
+def get_indicators():
+    try:
+        nifty = yf.Ticker("^NSEI")
+        vix = yf.Ticker("^INDIAVIX")
+
+        # Fetch historical data
+        hist = nifty.history(period="20d", interval="1d")
+        if hist.empty or "Close" not in hist.columns:
+            return {"error": "Failed to fetch NIFTY data. Try again later."}
+
+        delta = hist["Close"].diff()
+        gain = delta.where(delta > 0, 0)
+        loss = -delta.where(delta < 0, 0)
+        avg_gain = gain.rolling(14).mean()
+        avg_loss = loss.rolling(14).mean()
+        rs = avg_gain / avg_loss
+        rsi = 100 - (100 / (1 + rs))
+        current_rsi = rsi.dropna().iloc[-1]
+
+        current_nifty = hist["Close"].iloc[-1]
+
+        # VIX
+        vix_hist = vix.history(period="5d", interval="1d")
+        if vix_hist.empty:
+            return {"error": "Failed to fetch India VIX."}
+        current_vix = vix_hist["Close"].dropna().iloc[-1]
+
+        return {
+            "nifty": round(current_nifty, 2),
+            "rsi": round(current_rsi, 2),
+            "vix": round(current_vix, 2)
+        }
+
+    except Exception as e:
+        return {"error": f"An error occurred: {str(e)}"}
+
+@app.post("/api/signal", response_model=OutputData)
+def predict_trade(data: InputData):
+    nifty = data.nifty
+    rsi = data.rsi
+    vix = data.vix
+
+    if rsi > 70 and vix < 13:
+        return OutputData(signal="BUY PE", confidence=82.5, reason="Overbought RSI, low volatility")
+    elif rsi < 30 and vix < 13:
+        return OutputData(signal="BUY CE", confidence=80.1, reason="Oversold RSI, likely bounce")
+    elif vix > 18:
+        return OutputData(signal="STRADDLE", confidence=76.0, reason="High VIX, expect wide movement")
+    else:
+        return OutputData(signal="AVOID", confidence=55.0, reason="No clear signal")
+
+@app.get("/oe")
+def root():
+    return {"status": "OptionEdge API running"}
 
 
 
