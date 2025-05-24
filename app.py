@@ -17,11 +17,15 @@ from zoneinfo import ZoneInfo
 from pydantic import BaseModel
 from typing import Literal
 import pandas as pd
-
+import numpy as np
 
 import requests
+import pytz
+
+
 
 app = FastAPI()
+
 
 
 
@@ -35,7 +39,15 @@ class OutputData(BaseModel):
     confidence: float
     reason: str
 
+class OHLCVInput(BaseModel):
+    data: list  # list of dicts: [{"timestamp": ..., "open": 21500 "high": ..., "low": ..., "close": ..., "volume": ...}] # Not used, but required for POST schema compatibility
 
+
+
+class OHLCVInput(BaseModel):
+    data: list
+    
+    
 
 from kiteconnect import KiteConnect
 
@@ -393,6 +405,161 @@ def predict_trade(data: InputData):
 @app.get("/oe")
 def root():
     return {"status": "OptionEdge API running"}
+
+
+
+def is_market_open_india() -> bool:
+    india_tz = pytz.timezone("Asia/Kolkata")
+    now = datetime.now(india_tz)
+    if now.weekday() >= 5:
+        return False
+    market_open = now.replace(hour=9, minute=0, second=0, microsecond=0)
+    market_close = now.replace(hour=15, minute=30, second=0, microsecond=0)
+    return market_open <= now <= market_close
+
+
+
+def fetch_intraday_yahoo(symbol="RELIANCE.NS"):
+    ticker = yf.Ticker(symbol)
+    df = ticker.history(interval="5m", period="1d")
+    if df.empty:
+        raise Exception("No intraday data from Yahoo")
+    df.reset_index(inplace=True)
+    df.rename(columns={"Datetime": "timestamp"}, inplace=True)
+    return df
+
+
+def fetch_nse_intraday(symbol="RELIANCE"):
+    import time
+
+    headers = {
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+        "Accept-Language": "en-US,en;q=0.9",
+        "Referer": f"https://www.nseindia.com/get-quotes/equity?symbol={symbol}",
+    }
+
+    session = requests.Session()
+    try:
+        # Hit the homepage to get valid cookies
+        session.get("https://www.nseindia.com", headers=headers, timeout=5)
+        time.sleep(1.5)
+
+        # Updated API endpoint
+        url = f"https://www.nseindia.com/api/chart-data?symbol={symbol}"
+        res = session.get(url, headers=headers, timeout=10)
+
+        if res.status_code != 200:
+            raise Exception(f"NSE API error (HTTP {res.status_code})")
+
+        data = res.json()
+        candles = data.get("grapthData", [])
+        if not candles:
+            raise Exception("No intraday data from NSE API")
+
+        df = pd.DataFrame(candles, columns=["timestamp", "open", "high", "low", "close", "volume"])
+        df["timestamp"] = pd.to_datetime(df["timestamp"], unit="ms")
+        return df
+
+    except Exception as e:
+        raise Exception(f"Failed to fetch NSE data: {e}")
+
+
+
+
+
+@app.post("/api/alerts/breakout")
+async def get_alert(_: Request):
+    if not is_market_open_india():
+        return {
+            "type": None, "volumeSpike": False, "pattern": None, "confidence": 0,
+            "error": "Market is closed"
+        }
+
+    try:
+        df = fetch_intraday_yahoo("RELIANCE")
+        if len(df) < 3:
+            raise Exception("Too little data")
+
+        latest = df.iloc[-1]
+        prev = df.iloc[-2]
+
+        breakout = bool(latest["close"] > df["high"][:-1].max())
+        breakdown = bool(latest["close"] < df["low"][:-1].min())
+        df["vol_ma20"] = df["volume"].rolling(20).mean()
+        volume_spike = latest["volume"] > 1.5 * df["vol_ma20"].iloc[-1]
+
+        pattern = None
+        if latest["close"] > latest["open"] and prev["close"] < prev["open"]:
+            if latest["close"] > prev["open"] and latest["open"] < prev["close"]:
+                pattern = "Bullish Engulfing"
+
+        result = {
+            "type": None, "volumeSpike": volume_spike,
+            "pattern": pattern, "confidence": 0
+        }
+
+        if breakout and volume_spike:
+            result["type"] = "breakout"
+            result["confidence"] = 90 if pattern else 75
+        elif breakdown and volume_spike:
+            result["type"] = "breakdown"
+            result["confidence"] = 90 if pattern else 75
+
+        return result
+
+    except Exception as e:
+        return {
+            "type": None, "volumeSpike": False, "pattern": None, "confidence": 0,
+            "error": f"NSE fetch failed: {str(e)}"
+        }
+        
+      
+      
+
+@app.get("/api/option_suggestions")
+def get_option_suggestions():
+    try:
+        nifty = yf.Ticker("^NSEI")
+        vix = yf.Ticker("^INDIAVIX")
+
+        # Fetch historical data
+        hist = nifty.history(period="20d", interval="1d")
+        if hist.empty or "Close" not in hist.columns:
+            return {"error": "Failed to fetch NIFTY data. Try again later."}
+
+        # RSI Calculation
+        delta = hist["Close"].diff()
+        gain = delta.where(delta > 0, 0)
+        loss = -delta.where(delta < 0, 0)
+        avg_gain = gain.rolling(14).mean()
+        avg_loss = loss.rolling(14).mean()
+        rs = avg_gain / avg_loss
+        rsi = 100 - (100 / (1 + rs))
+        current_rsi = rsi.dropna().iloc[-1]
+
+        current_nifty = hist["Close"].iloc[-1]
+
+        # VIX Calculation
+        vix_hist = vix.history(period="5d", interval="1d")
+        if vix_hist.empty:
+            return {"error": "Failed to fetch India VIX."}
+        current_vix = vix_hist["Close"].dropna().iloc[-1]
+
+        # Option Suggestions
+        if current_vix > 18 and current_rsi > 70:
+            suggestion = f"Try {round(current_nifty + 100, 0)} CE + {round(current_nifty - 100, 0)} PE"
+        else:
+            suggestion = "Conditions not met for a straddle/strangle suggestion."
+
+        return {
+            "nifty": round(current_nifty, 2),
+            "rsi": round(current_rsi, 2),
+            "vix": round(current_vix, 2),
+            "suggestion": suggestion
+        }
+
+    except Exception as e:
+        return {"error": f"An error occurred: {str(e)}"}
 
 
 
