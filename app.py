@@ -16,6 +16,9 @@ from zoneinfo import ZoneInfo
 
 from pydantic import BaseModel
 from typing import Literal
+
+from yt_trends_utils import get_recent_video_captions, get_google_trends_for_india
+
 import pandas as pd
 import numpy as np
 
@@ -597,3 +600,26 @@ async def redirect_to_long_url(short_url: str):
         print("Error in redirect_to_long_url:", str(e))
         raise HTTPException(status_code=500, detail="Internal Server Error")
         
+
+
+
+@app.get("/api/youtube-captions")
+def fetch_youtube_captions(max_results: int = 10):
+    try:
+        data = get_recent_video_captions(max_results)
+        return {"status": "success", "videos": data}
+    except Exception as e:
+        return {"status": "error", "message": str(e)}
+
+@app.get("/api/google-trends")
+def fetch_google_trends():
+    try:
+        trends = get_google_trends_for_india()
+        return {"status": "success", "trends": trends}
+    except Exception as e:
+        print("[INFO] Falling back to realtime_trending_searches()...")
+        return {"status": "error", "message": str(e)}
+
+
+
+
