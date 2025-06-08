@@ -24,12 +24,27 @@ import numpy as np
 
 import requests
 import pytz
-
+from datetime import date
 
 
 app = FastAPI()
 
 
+
+
+# Sample rule-based event calendar
+EVENTS = [
+    {"date": "2025-06-13", "event": "Weekly Expiry", "impact": "High"},
+    {"date": "2025-06-15", "event": "Fed Interest Rate Decision", "impact": "High"},
+    {"date": "2025-06-18", "event": "India GDP Data", "impact": "Medium"},
+    {"date": "2025-07-01", "event": "Union Budget", "impact": "Very High"},
+    {"date": "2025-07-15", "event": "General Elections Result Day", "impact": "Extreme"},
+]
+
+class CalendarEvent(BaseModel):
+    date: str
+    event: str
+    impact: str
 
 
 class InputData(BaseModel):
@@ -568,6 +583,39 @@ def get_option_suggestions():
 
 
 
+
+@app.get("/api/youtube-captions")
+def fetch_youtube_captions(max_results: int = 10):
+    try:
+        data = get_recent_video_captions(max_results)
+        return {"status": "success", "videos": data}
+    except Exception as e:
+        return {"status": "error", "message": str(e)}
+
+@app.get("/api/google-trends")
+def fetch_google_trends():
+    try:
+        trends = get_google_trends_for_india()
+        return {"status": "success", "trends": trends}
+    except Exception as e:
+        print("[INFO] Falling back to realtime_trending_searches()...")
+        return {"status": "error", "message": str(e)}
+
+
+
+
+@app.get("/api/event-calendar", response_model=list[CalendarEvent])
+def get_event_calendar():
+    today = date.today().isoformat()
+    upcoming_events = [event for event in EVENTS if event["date"] >= today]
+    return upcoming_events
+
+
+
+
+
+
+
 @app.post("/generate-hindi-audio/")
 async def generate_hindi_audio(request: Request):
     body = await request.json()
@@ -600,26 +648,6 @@ async def redirect_to_long_url(short_url: str):
         print("Error in redirect_to_long_url:", str(e))
         raise HTTPException(status_code=500, detail="Internal Server Error")
         
-
-
-
-@app.get("/api/youtube-captions")
-def fetch_youtube_captions(max_results: int = 10):
-    try:
-        data = get_recent_video_captions(max_results)
-        return {"status": "success", "videos": data}
-    except Exception as e:
-        return {"status": "error", "message": str(e)}
-
-@app.get("/api/google-trends")
-def fetch_google_trends():
-    try:
-        trends = get_google_trends_for_india()
-        return {"status": "success", "trends": trends}
-    except Exception as e:
-        print("[INFO] Falling back to realtime_trending_searches()...")
-        return {"status": "error", "message": str(e)}
-
 
 
 
