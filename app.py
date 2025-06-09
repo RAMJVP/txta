@@ -407,7 +407,7 @@ def get_indicators():
         print("Live fetch failed, returning fallback indicators.")
         return {
             "nifty": 25120.00,
-            "rsi": 65.34,
+            "rsi": 70.34,
             "vix": 14.86,
             "note": "Live data fetch failed. Showing fallback values."
         }
