@@ -13,7 +13,7 @@ def get_recent_video_captions(max_results=10):
     youtube = build('youtube', 'v3', developerKey=YOUTUBE_API_KEY)
 
     published_after = (datetime.utcnow() - timedelta(days=1)).isoformat("T") + "Z"
-    query = "stock|BSE|NSE|India|Jewar Airport"
+    query = "BSE|NSE|India|Jewar|stock"
 
     search_response = youtube.search().list(
         q=query,
