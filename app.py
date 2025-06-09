@@ -16,6 +16,8 @@ from zoneinfo import ZoneInfo
 
 from pydantic import BaseModel
 from typing import Literal
+from typing import List
+
 
 from yt_trends_utils import get_recent_video_captions, get_google_trends_for_india
 
@@ -25,12 +27,42 @@ import numpy as np
 import requests
 import pytz
 from datetime import date
+from datetime import datetime, timedelta
 
 
-app = FastAPI()
 
 
 
+    
+
+
+
+
+class InputData(BaseModel):
+    nifty: float
+    rsi: float
+    vix: float
+
+class OutputData(BaseModel):
+    signal: str
+    confidence: float
+    reason: str
+
+class BacktestResult(BaseModel):
+    date: str
+    nifty: float
+    rsi: float
+    vix: float
+    signal: str
+    confidence: float
+    reason: str
+    simulated_return: float
+
+class BacktestResponse(BaseModel):
+    trades: List[BacktestResult]
+    win_rate: float
+    avg_return: float
+    total_return: float
 
 # Sample rule-based event calendar
 EVENTS = [
@@ -619,6 +651,58 @@ def get_event_calendar():
     today = date.today().isoformat()
     upcoming_events = [event for event in EVENTS if event["date"] >= today]
     return upcoming_events
+
+
+
+@app.post("/api/signal1", response_model=OutputData)
+def predict_trade(data: InputData):
+    if data.rsi > 70 and data.vix < 13:
+        return OutputData(signal="BUY PE", confidence=82.5, reason="Overbought RSI, low volatility")
+    elif data.rsi < 30 and data.vix < 13:
+        return OutputData(signal="BUY CE", confidence=80.1, reason="Oversold RSI, likely bounce")
+    elif data.vix > 18:
+        return OutputData(signal="STRADDLE", confidence=76.0, reason="High VIX, expect wide movement")
+    else:
+        return OutputData(signal="AVOID", confidence=55.0, reason="No clear signal")
+
+
+#If you only want to run today’s prediction (no historical backtest), you can simplify /api/backtest like this:
+@app.post("/api/backtest")
+def backtest():
+    try:
+        print("Fetching live indicators from /api/indicators...")
+        indicators = requests.get("https://txta-1.onrender.com/api/indicators").json()
+
+        n_val = indicators["nifty"]
+        r_val = indicators["rsi"]
+        v_val = indicators["vix"]
+        print(f"Fetched: NIFTY={n_val}, RSI={r_val}, VIX={v_val}")
+
+        signal_result = predict_trade(InputData(nifty=n_val, rsi=r_val, vix=v_val))
+        print(f"Signal: {signal_result.signal}, Confidence: {signal_result.confidence}, Reason: {signal_result.reason}")
+
+        trades = [BacktestResult(
+            date=datetime.now().strftime("%Y-%m-%d"),
+            nifty=n_val,
+            rsi=r_val,
+            vix=v_val,
+            signal=signal_result.signal,
+            confidence=signal_result.confidence,
+            reason=signal_result.reason,
+            simulated_return=2.0 if signal_result.signal in ["BUY CE", "STRADDLE"] else -1.0
+        )]
+
+        return BacktestResponse(
+            trades=trades,
+            win_rate=100.0 if trades[0].simulated_return > 0 else 0.0,
+            avg_return=trades[0].simulated_return,
+            total_return=trades[0].simulated_return
+        )
+
+    except Exception as e:
+        print(f"Error in /api/backtest: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
 
 
 
