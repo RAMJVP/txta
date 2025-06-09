@@ -368,16 +368,17 @@ def login_callback(request_token: str):
         return {"error": str(e)}
 
 
+
 @app.get("/api/indicators")
 def get_indicators():
     try:
         nifty = yf.Ticker("^NSEI")
         vix = yf.Ticker("^INDIAVIX")
 
-        # Fetch historical data
         hist = nifty.history(period="20d", interval="1d")
         if hist.empty or "Close" not in hist.columns:
-            return {"error": "Failed to fetch NIFTY data. Try again later."}
+            print("DEBUG: NIFTY history is empty or missing 'Close' column.")
+            raise Exception("NIFTY history is empty")
 
         delta = hist["Close"].diff()
         gain = delta.where(delta > 0, 0)
@@ -390,10 +391,10 @@ def get_indicators():
 
         current_nifty = hist["Close"].iloc[-1]
 
-        # VIX
         vix_hist = vix.history(period="5d", interval="1d")
         if vix_hist.empty:
-            return {"error": "Failed to fetch India VIX."}
+            print("DEBUG: VIX history is empty.")
+            raise Exception("VIX history is empty")
         current_vix = vix_hist["Close"].dropna().iloc[-1]
 
         return {
@@ -403,7 +404,16 @@ def get_indicators():
         }
 
     except Exception as e:
-        return {"error": f"An error occurred: {str(e)}"}
+        print("Live fetch failed, returning fallback indicators.")
+        return {
+            "nifty": 25120.00,
+            "rsi": 65.34,
+            "vix": 14.86,
+            "note": "Live data fetch failed. Showing fallback values."
+        }
+
+
+
 
 @app.post("/api/signal", response_model=OutputData)
 def predict_trade(data: InputData):
