@@ -457,6 +457,10 @@ def get_indicators():
         print("Returning fallback values:", fallback)
         return fallback
 
+
+
+
+
 @app.get("/api/indicators/saved")
 def get_saved_indicators():
     if os.path.exists(SAVE_FILE):
@@ -466,12 +470,22 @@ def get_saved_indicators():
             return data
     return {"nifty": 25120.00, "rsi": 70.34, "vix": 14.86, "note": "No saved file found"}
 
+
 @app.post("/api/indicators/save")
 def save_indicators(data: InputData):
-    with open(SAVE_FILE, "w") as f:
-        json.dump(data.dict(), f)
-    print("Indicators saved to file:", data.dict())
-    return {"status": "saved"}
+    try:
+        print(f"[SAVE] Attempting to save indicators to file: {SAVE_FILE}")
+        with open(SAVE_FILE, "w") as f:
+            json.dump(data.dict(), f, indent=2)
+            f.flush()
+            os.fsync(f.fileno())
+        print(f"[SAVE] Successfully saved: {data.dict()}")
+        return {"status": "saved", "data": data.dict()}
+    except Exception as e:
+        print(f"[SAVE ERROR] Failed to save indicators: {e}")
+        raise HTTPException(status_code=500, detail="Failed to save indicators")
+
+
 
 @app.get("/api/indicators/view-file")
 def view_file_contents():
