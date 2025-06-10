@@ -402,6 +402,9 @@ def login_callback(request_token: str):
         return {"error": str(e)}
 
 
+
+
+
 @app.get("/api/indicators")
 def get_indicators():
     try:
@@ -427,44 +430,57 @@ def get_indicators():
             raise Exception("VIX history is empty")
         current_vix = vix_hist["Close"].dropna().iloc[-1]
 
+        print("Fetched live indicators")
         return {
             "nifty": round(current_nifty, 2),
             "rsi": round(current_rsi, 2),
             "vix": round(current_vix, 2)
         }
+
     except Exception as e:
         print(f"Live fetch failed: {e}")
-
-        # Try reading from saved file
-        if os.path.exists(SAVE_FILE_PATH):
+        if os.path.exists(SAVE_FILE):
             try:
-                with open(SAVE_FILE_PATH, "r") as f:
-                    return json.load(f)
+                with open(SAVE_FILE, "r") as f:
+                    saved_data = json.load(f)
+                    print("Returning values from saved file:", saved_data)
+                    return saved_data
             except Exception as err:
-                print(f"Failed to read file: {err}")
+                print(f"Failed to read saved file: {err}")
 
-        # Fallback
-        return {
+        fallback = {
             "nifty": 25120.00,
             "rsi": 70.34,
             "vix": 14.86,
             "note": "Live data fetch failed. Showing fallback values."
         }
-        
-        
-        
+        print("Returning fallback values:", fallback)
+        return fallback
+
 @app.get("/api/indicators/saved")
 def get_saved_indicators():
     if os.path.exists(SAVE_FILE):
         with open(SAVE_FILE, "r") as f:
-            return json.load(f)
+            data = json.load(f)
+            print("Loaded saved indicators:", data)
+            return data
     return {"nifty": 25120.00, "rsi": 70.34, "vix": 14.86, "note": "No saved file found"}
 
 @app.post("/api/indicators/save")
 def save_indicators(data: InputData):
     with open(SAVE_FILE, "w") as f:
         json.dump(data.dict(), f)
+    print("Indicators saved to file:", data.dict())
     return {"status": "saved"}
+
+@app.get("/api/indicators/view-file")
+def view_file_contents():
+    if os.path.exists(SAVE_FILE):
+        with open(SAVE_FILE, "r") as f:
+            contents = json.load(f)
+        print("File content viewed:", contents)
+        return contents
+    return {"error": "File not found"}
 
 @app.post("/api/signal", response_model=OutputData)
 def predict_trade(data: InputData):
@@ -480,8 +496,11 @@ def predict_trade(data: InputData):
         return OutputData(signal="STRADDLE", confidence=76.0, reason="High VIX, expect wide movement")
     else:
         return OutputData(signal="AVOID", confidence=55.0, reason="No clear signal")
-        
-        
+
+
+
+
+
 
 
 @app.get("/oe")
