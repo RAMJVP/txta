@@ -33,8 +33,10 @@ from datetime import datetime, timedelta
 
 
 
-    
+import json
 
+    
+SAVE_FILE = "saved_inputs.json"
 
 
 
@@ -409,7 +411,6 @@ def get_indicators():
 
         hist = nifty.history(period="20d", interval="1d")
         if hist.empty or "Close" not in hist.columns:
-            print("DEBUG: NIFTY history is empty or missing 'Close' column.")
             raise Exception("NIFTY history is empty")
 
         delta = hist["Close"].diff()
@@ -420,12 +421,10 @@ def get_indicators():
         rs = avg_gain / avg_loss
         rsi = 100 - (100 / (1 + rs))
         current_rsi = rsi.dropna().iloc[-1]
-
         current_nifty = hist["Close"].iloc[-1]
 
         vix_hist = vix.history(period="5d", interval="1d")
         if vix_hist.empty:
-            print("DEBUG: VIX history is empty.")
             raise Exception("VIX history is empty")
         current_vix = vix_hist["Close"].dropna().iloc[-1]
 
@@ -434,9 +433,8 @@ def get_indicators():
             "rsi": round(current_rsi, 2),
             "vix": round(current_vix, 2)
         }
-
     except Exception as e:
-        print("Live fetch failed, returning fallback indicators.")
+        print(f"Live fetch failed: {e}")
         return {
             "nifty": 25120.00,
             "rsi": 70.34,
@@ -444,8 +442,18 @@ def get_indicators():
             "note": "Live data fetch failed. Showing fallback values."
         }
 
+@app.get("/api/indicators/saved")
+def get_saved_indicators():
+    if os.path.exists(SAVE_FILE):
+        with open(SAVE_FILE, "r") as f:
+            return json.load(f)
+    return {"nifty": 25120.00, "rsi": 70.34, "vix": 14.86, "note": "No saved file found"}
 
-
+@app.post("/api/indicators/save")
+def save_indicators(data: InputData):
+    with open(SAVE_FILE, "w") as f:
+        json.dump(data.dict(), f)
+    return {"status": "saved"}
 
 @app.post("/api/signal", response_model=OutputData)
 def predict_trade(data: InputData):
@@ -461,6 +469,9 @@ def predict_trade(data: InputData):
         return OutputData(signal="STRADDLE", confidence=76.0, reason="High VIX, expect wide movement")
     else:
         return OutputData(signal="AVOID", confidence=55.0, reason="No clear signal")
+        
+        
+
 
 @app.get("/oe")
 def root():
