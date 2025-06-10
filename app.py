@@ -402,7 +402,6 @@ def login_callback(request_token: str):
         return {"error": str(e)}
 
 
-
 @app.get("/api/indicators")
 def get_indicators():
     try:
@@ -435,13 +434,25 @@ def get_indicators():
         }
     except Exception as e:
         print(f"Live fetch failed: {e}")
+
+        # Try reading from saved file
+        if os.path.exists(SAVE_FILE_PATH):
+            try:
+                with open(SAVE_FILE_PATH, "r") as f:
+                    return json.load(f)
+            except Exception as err:
+                print(f"Failed to read file: {err}")
+
+        # Fallback
         return {
             "nifty": 25120.00,
             "rsi": 70.34,
             "vix": 14.86,
             "note": "Live data fetch failed. Showing fallback values."
         }
-
+        
+        
+        
 @app.get("/api/indicators/saved")
 def get_saved_indicators():
     if os.path.exists(SAVE_FILE):
