@@ -34,6 +34,24 @@ from datetime import datetime, timedelta
 
 
 import json
+import random
+from fastapi.responses import JSONResponse
+
+
+
+
+
+class StrategyInput(BaseModel):
+    nifty: float
+    rsi: float
+    vix: float
+    event: str
+
+class StrategyOutput(BaseModel):
+    strategy: str
+    confidence: float
+    reason: str
+
 
     
 SAVE_FILE = "saved_inputs.json"
@@ -759,8 +777,66 @@ def backtest():
         raise HTTPException(status_code=500, detail=str(e))
 
 
+@app.post("/api/strategy", response_model=StrategyOutput)
+def get_event_strategy(data: StrategyInput):
+    event = data.event.lower().strip()
+    rsi = data.rsi
+    vix = data.vix
 
+    if not event:
+        return StrategyOutput(
+            strategy="Manual Analysis Required",
+            confidence=0.0,
+            reason="No event selected. Please analyze based on indicators."
+        )
 
+    if event == "rbi":
+        if rsi < 40:
+            return StrategyOutput(
+                strategy="Buy BANKNIFTY ATM CE (3 weeks)",
+                confidence=87.5,
+                reason="Dovish outlook + oversold condition"
+            )
+        else:
+            return StrategyOutput(
+                strategy="ATM Straddle on BANKNIFTY",
+                confidence=75.0,
+                reason="Neutral stance expected from RBI + low VIX"
+            )
+
+    elif event == "budget":
+        if vix > 16:
+            return StrategyOutput(
+                strategy="Bear Put Spread on NIFTY",
+                confidence=82.0,
+                reason="Pre-budget volatility spike and uncertain fiscal cues"
+            )
+        else:
+            return StrategyOutput(
+                strategy="Buy NIFTY CE (ATM +1 week)",
+                confidence=68.0,
+                reason="Positive sentiment around budget announcement"
+            )
+
+    elif event == "usfed":
+        return StrategyOutput(
+            strategy="NIFTY ATM Strangle (exp +2 weeks)",
+            confidence=78.5,
+            reason="Fed day has historically caused wide swings in both directions"
+        )
+
+    elif event == "results":
+        return StrategyOutput(
+            strategy="Buy IT Sector CE Basket",
+            confidence=74.3,
+            reason="IT sector historically outperforms in earnings season (Q4)"
+        )
+
+    return StrategyOutput(
+        strategy="AVOID",
+        confidence=50.0,
+        reason="No matching strategy for selected event"
+    )
 
 
 
