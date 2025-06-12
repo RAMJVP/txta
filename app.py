@@ -40,6 +40,24 @@ from fastapi.responses import JSONResponse
 
 
 
+    
+SAVE_FILE = "saved_inputs.json"
+
+
+
+class PatternInput(BaseModel):
+    event: str
+    nifty: float
+    rsi: float
+    vix: float
+    oiChange: float
+
+class PatternOutput(BaseModel):
+    pattern: str
+    signal: str
+    confidence: float
+    reason: str
+
 
 class StrategyInput(BaseModel):
     nifty: float
@@ -51,11 +69,6 @@ class StrategyOutput(BaseModel):
     strategy: str
     confidence: float
     reason: str
-
-
-    
-SAVE_FILE = "saved_inputs.json"
-
 
 
 class InputData(BaseModel):
@@ -838,6 +851,18 @@ def get_event_strategy(data: StrategyInput):
         reason="No matching strategy for selected event"
     )
 
+
+@app.post("/api/pattern-detect", response_model=PatternOutput)
+def detect_pattern(data: PatternInput):
+    # Simulated logic
+    patterns = ["Bullish Harami", "Bearish Engulfing", "Doji", "Morning Star", "None"]
+    detected = random.choices(patterns, weights=[0.2, 0.2, 0.2, 0.2, 0.2])[0]
+
+    signal = "BUY CE" if data.rsi < 30 and detected == "Bullish Harami" else "SELL PE" if detected == "Bearish Engulfing" else "WAIT"
+    confidence = 80.0 if signal != "WAIT" else 55.0
+    reason = f"{detected} detected with RSI={data.rsi}, VIX={data.vix}, OI%={data.oiChange}"
+
+    return PatternOutput(pattern=detected, signal=signal, confidence=confidence, reason=reason)
 
 
 
