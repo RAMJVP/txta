@@ -113,10 +113,6 @@ class CalendarEvent(BaseModel):
     impact: str
 
 
-class InputData(BaseModel):
-    nifty: float
-    rsi: float
-    vix: float
 
 class OutputData(BaseModel):
     signal: Literal["BUY CE", "BUY PE", "STRADDLE", "AVOID"]
