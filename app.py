@@ -70,12 +70,13 @@ class StrategyOutput(BaseModel):
     confidence: float
     reason: str
 
-
 class InputData(BaseModel):
     nifty: float
     rsi: float
     vix: float
-
+    oiChange: float = 1.4  # Add this line
+    
+    
 class OutputData(BaseModel):
     signal: str
     confidence: float
