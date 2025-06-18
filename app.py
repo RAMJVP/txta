@@ -36,14 +36,45 @@ from datetime import datetime, timedelta
 import json
 import random
 from fastapi.responses import JSONResponse
+import time
+
+from fastapi import APIRouter
+
+
+router = APIRouter()
+
+SECTORS = {
+    "IT": "INFY.NS",
+    "Finance": "HDFCBANK.NS",
+    "Nifty": "NIFTYBEES.NS",  # ✅ Reliable ETF proxy
+}
 
 
 
+
+EVENTS = [
+    {"name": "Budget 2024", "date": "2024-02-01"},
+    {"name": "RBI Rate Decision", "date": "2024-04-05"},
+    {"name": "Elections Result", "date": "2024-06-04"},
+]
+
+INTERVALS = {
+    "day_1": 1,
+    "day_3": 3,
+    "day_7": 7,
+    "day_15": 15
+}
 
     
 SAVE_FILE = "saved_inputs.json"
 
 
+
+class SimRequest(BaseModel):
+    startYear: int
+    endYear: int
+    entryDays: int
+    gap: int
 
 class PatternInput(BaseModel):
     event: str
@@ -849,6 +880,35 @@ def get_event_strategy(data: StrategyInput):
     )
 
 
+
+@router.post("/simulate-straddle")
+def simulate_straddle(req: SimRequest):
+    print("✅ [simulate-straddle] request received:", req.dict())
+
+    random.seed(42)
+    trials = 100
+    returns = []
+
+    for _ in range(trials):
+        r = random.gauss(4, 8)  # mean=4%, sd=8% as dummy
+        returns.append(r)
+
+    winRate = sum(1 for r in returns if r > 0) / trials * 100
+    result = {
+        "trials": trials,
+        "averageReturn": sum(returns) / trials,
+        "winRate": winRate,
+        "maxProfit": max(returns),
+        "maxLoss": min(returns),
+        "distribution": returns,
+    }
+
+    print("✅ [simulate-straddle] result:", result)
+    return result
+
+ 
+    
+
 @app.post("/api/pattern-detect", response_model=PatternOutput)
 def detect_pattern(data: PatternInput):
     # Simulated logic
@@ -895,6 +955,18 @@ async def redirect_to_long_url(short_url: str):
         print("Error in redirect_to_long_url:", str(e))
         raise HTTPException(status_code=500, detail="Internal Server Error")
         
+        
+        
+        
+        
+        
+        
+        
+        
+        
+        
 
 
 
+
+app.include_router(router, prefix="/api")
