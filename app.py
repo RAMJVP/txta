@@ -41,6 +41,23 @@ import time
 from fastapi import APIRouter
 
 
+
+
+
+
+rbi_dates = [
+    "2015-01-15", "2015-06-02", "2016-02-02", "2016-04-05", "2017-02-08",
+    "2017-04-06", "2018-02-07", "2018-06-06", "2019-02-07", "2019-08-07",
+    "2020-02-06", "2020-05-22", "2021-02-05", "2021-08-06", "2022-02-10",
+    "2022-06-08", "2023-02-08", "2023-06-08", "2024-02-08"
+]
+
+
+
+
+
+
+
 router = APIRouter()
 
 SECTORS = {
@@ -881,32 +898,83 @@ def get_event_strategy(data: StrategyInput):
 
 
 
+def get_nifty_close(date: datetime, fallback_df: pd.DataFrame):
+    date_str = date.strftime("%Y-%m-%d")
+    if date_str in fallback_df.index:
+        return fallback_df.loc[date_str]["Close"]
+    return None
+
+
 @router.post("/simulate-straddle")
 def simulate_straddle(req: SimRequest):
-    print("✅ [simulate-straddle] request received:", req.dict())
+    print(f"📅 Simulating straddle for RBI events from {req.startYear} to {req.endYear}, {req.entryDays} days before")
 
-    random.seed(42)
-    trials = 100
+    fallback_csv = "nifty.csv"
+    if not os.path.exists(fallback_csv):
+        return {"error": "Missing nifty.csv file"}
+
+    fallback_df = pd.read_csv(fallback_csv, parse_dates=["Date"])
+    fallback_df.set_index("Date", inplace=True)
+    fallback_df = fallback_df[~fallback_df.index.duplicated(keep="first")]
     returns = []
 
-    for _ in range(trials):
-        r = random.gauss(4, 8)  # mean=4%, sd=8% as dummy
-        returns.append(r)
+    for date_str in rbi_dates:
+        try:
+            rbi_date = datetime.strptime(date_str, "%Y-%m-%d")
+            if not (req.startYear <= rbi_date.year <= req.endYear):
+                continue
 
-    winRate = sum(1 for r in returns if r > 0) / trials * 100
+            entry_date = rbi_date - timedelta(days=req.entryDays)
+            exit_date = rbi_date
+
+            print(f"🔍 Processing RBI event: {date_str} | Entry: {entry_date.date()}, Exit: {exit_date.date()}")
+
+            # Get nearest previous trading date for entry and exit
+            entry_actual = fallback_df.index[fallback_df.index <= entry_date].max()
+            exit_actual = fallback_df.index[fallback_df.index <= exit_date].max()
+
+            if pd.isna(entry_actual) or pd.isna(exit_actual):
+                print(f"❌ Skipping {date_str}: No data around {entry_date} or {exit_date}")
+                continue
+
+            start_price = fallback_df.loc[entry_actual]["Close"]
+            end_price = fallback_df.loc[exit_actual]["Close"]
+
+            change_pct = ((end_price - start_price) / start_price) * 100
+            returns.append(round(abs(change_pct), 2))
+
+            print(f"✅ Return for {date_str}: {change_pct:.2f}%")
+
+        except Exception as e:
+            print(f"❌ Error processing {date_str}: {e}")
+            continue
+
+    if not returns:
+        print("❗ No valid simulation results.")
+        return {
+            "trials": 0,
+            "averageReturn": 0,
+            "winRate": 0,
+            "maxProfit": 0,
+            "maxLoss": 0,
+            "distribution": []
+        }
+
     result = {
-        "trials": trials,
-        "averageReturn": sum(returns) / trials,
-        "winRate": winRate,
+        "trials": len(returns),
+        "averageReturn": sum(returns) / len(returns),
+        "winRate": sum(1 for r in returns if r > 0) / len(returns) * 100,
         "maxProfit": max(returns),
         "maxLoss": min(returns),
-        "distribution": returns,
+        "distribution": returns
     }
 
-    print("✅ [simulate-straddle] result:", result)
+    print("✅ Final simulation result:", result)
     return result
 
- 
+
+
+
     
 
 @app.post("/api/pattern-detect", response_model=PatternOutput)
