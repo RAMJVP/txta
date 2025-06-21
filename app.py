@@ -45,6 +45,18 @@ from fastapi import APIRouter
 
 
 
+class AlertRequest(BaseModel):
+    event: str
+    confidence: float
+    suggested_action: str
+    reasoning: str
+    premium: bool = False
+
+ALERT_FILE = "alerts.json"
+
+
+
+
 rbi_dates = [
     "2015-01-15", "2015-06-02", "2016-02-02", "2016-04-05", "2017-02-08",
     "2017-04-06", "2018-02-07", "2018-06-06", "2019-02-07", "2019-08-07",
@@ -973,6 +985,93 @@ def simulate_straddle(req: SimRequest):
     return result
 
 
+
+
+
+
+
+def send_whatsapp_alert(message: str):
+    print(f"📲 WhatsApp message sent: {message}")  # Placeholder
+    # Integrate Twilio/Interakt API here
+
+
+
+
+def log_alert(alert: dict):
+    if os.path.exists(ALERT_FILE):
+        with open(ALERT_FILE, "r") as f:
+            data = json.load(f)
+    else:
+        data = []
+    data.append(alert)
+    with open(ALERT_FILE, "w") as f:
+        json.dump(data, f, indent=2)
+
+
+
+
+@app.post("/api/alert")
+def generate_alert(req: AlertRequest, background_tasks: BackgroundTasks):
+    timestamp = datetime.now().isoformat()
+    alert = {
+        "event": req.event,
+        "confidence": req.confidence,
+        "suggested_action": req.suggested_action,
+        "reasoning": req.reasoning,
+        "timestamp": timestamp
+    }
+    log_alert(alert)
+
+    message = f"⚠️ Alert: {req.event}\n{req.reasoning}\nSuggested: {req.suggested_action} ({req.confidence:.1f}% confidence)"
+    if req.premium:
+        background_tasks.add_task(send_whatsapp_alert, message)
+
+    return {"status": "ok", "sent": req.premium, "message": message}
+
+
+
+@app.get("/api/generate-alert")
+def generate_dynamic_alert(premium: bool = False):
+    fed_day_tomorrow = check_if_fed_day_tomorrow()  # implement this
+    if not fed_day_tomorrow:
+        return {"status": "no_alert", "reason": "No event tomorrow"}
+
+    # Load past Fed event reactions (you can use CSV/hardcoded/mock data)
+    past_returns = [-1.5, -2.1, -0.8, -1.0, -1.7, -2.2, 0.4, -0.9, -1.3, -1.1, -1.8, -0.6]
+    avg_return = sum(past_returns) / len(past_returns)
+
+    suggestion = "BUY PE with 10% buffer" if avg_return < 0 else "BUY CE"
+    confidence = 88.6 if avg_return < 0 else 78.0
+    reasoning = f"Based on {len(past_returns)} similar Fed days, avg return was {avg_return:.2f}%"
+
+    # Compose alert
+    alert = {
+        "event": "Fed Day Tomorrow",
+        "confidence": confidence,
+        "suggested_action": suggestion,
+        "reasoning": reasoning,
+        "premium": premium
+    }
+
+    # Optionally log/send
+    if premium:
+        generate_alert(AlertRequest(**alert), BackgroundTasks())
+
+    return {"status": "alert_generated", **alert}
+
+
+
+
+def check_if_fed_day_tomorrow():
+    tomorrow = datetime.now().date() + timedelta(days=1)
+    fed_days = [
+        "2024-07-31", "2024-09-18", "2024-11-06", "2025-01-29"
+    ]
+    return tomorrow.strftime("%Y-%m-%d") in fed_days
+    
+    
+    
+    
 
 
     
