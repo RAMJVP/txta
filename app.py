@@ -790,7 +790,7 @@ def fetch_google_trends():
 
 @app.get("/api/youtube-captions/by-channel")
 def fetch_youtube_captions_by_channel(
-    channel_name: str = Query(..., description="YouTube channel handle, e.g. @kidomelon2682"),
+    channel_name: str = Query(..., description="YouTube channel handle or name, e.g. @kidomelon2682"),
     max_results: int = Query(20)
 ):
     try:
