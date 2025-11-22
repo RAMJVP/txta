@@ -788,24 +788,17 @@ def fetch_google_trends():
 
 
 
-
-
 @app.get("/api/youtube-captions/by-channel")
-def fetch_youtube_captions_by_channel(channel_name: str = Query(..., description="YouTube channel handle, e.g. @kidomelon2682")):
-    """
-    Fetch all captions from recent videos of a specific YouTube channel.
-    Example: /api/youtube-captions/by-channel?channel_name=@kidomelon2682
-    """
+def fetch_youtube_captions_by_channel(
+    channel_name: str = Query(..., description="YouTube channel handle, e.g. @kidomelon2682"),
+    max_results: int = Query(20)
+):
     try:
-        # 🔹 You may already have similar function in yt_trends_utils
         from yt_trends_utils import get_recent_video_captions_by_channel
-
-        data = get_recent_video_captions_by_channel(channel_name)
+        data = get_recent_video_captions_by_channel(channel_name, max_results=max_results)
         return {"status": "success", "videos": data}
-
     except Exception as e:
         return {"status": "error", "message": str(e)}
-
 
 
 
