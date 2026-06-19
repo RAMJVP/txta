@@ -41,7 +41,7 @@ import time
 from fastapi import APIRouter
 
 
-
+from news_rss_service import get_google_business_news
 
 
 
@@ -1135,10 +1135,25 @@ async def redirect_to_long_url(short_url: str):
     except Exception as e:
         print("Error in redirect_to_long_url:", str(e))
         raise HTTPException(status_code=500, detail="Internal Server Error")
+
+
         
-        
-        
-        
+@app.get("/api/business-news")
+def fetch_business_news(max_results: int = 20):
+    try:
+        data = get_google_business_news(max_results)
+
+        return {
+            "status": "success",
+            "count": len(data),
+            "news": data
+        }
+
+    except Exception as e:
+        return {
+            "status": "error",
+            "message": str(e)
+        }        
         
         
         
