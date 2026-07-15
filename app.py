@@ -17,7 +17,12 @@ from zoneinfo import ZoneInfo
 from pydantic import BaseModel
 from typing import Literal
 from typing import List
+from pathlib import Path
+from fastapi.staticfiles import StaticFiles
 
+from imagecloud.image_cloud_api import (
+    router as image_cloud_router,
+)
 
 from yt_trends_utils import get_recent_video_captions, get_google_trends_for_india
 
@@ -193,6 +198,29 @@ from kiteconnect import KiteConnect
 
 # Initialize FastAPI app
 app = FastAPI()
+
+
+# ---------------------------------------------------------
+# Image Cloud
+# ---------------------------------------------------------
+
+PROJECT_ROOT = Path(__file__).resolve().parent
+
+BRAHMA_FOLDER = PROJECT_ROOT / "brahma"
+
+if not BRAHMA_FOLDER.exists():
+    raise RuntimeError(
+        f"Image folder not found: {BRAHMA_FOLDER}"
+    )
+
+app.mount(
+    "/imagecloud",
+    StaticFiles(directory=str(BRAHMA_FOLDER)),
+    name="imagecloud",
+)
+
+
+
 
 # Add CORS middleware
 app.add_middleware(
@@ -1165,4 +1193,12 @@ def fetch_business_news(max_results: int = 20):
 
 
 
+#app.include_router(router, prefix="/api")
+# Registers endpoints created directly with:
+# @router.get(...)
+# @router.post(...)
 app.include_router(router, prefix="/api")
+
+# Registers the Image Cloud API router
+# Its prefix is already "/api/image-cloud"
+app.include_router(image_cloud_router)
