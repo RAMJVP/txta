@@ -2,6 +2,15 @@ import os
 import re
 import yt_dlp
 from dotenv import load_dotenv
+
+from pathlib import Path
+
+BASE_DIR = Path(__file__).resolve().parent
+load_dotenv(BASE_DIR / ".env", override=False)
+
+
+
+
 from time import time
 
 from datetime import datetime, timedelta, timezone
@@ -29,9 +38,7 @@ from fastapi.staticfiles import StaticFiles
 from imagecloud.image_cloud_api import (
     router as image_cloud_router,
 )
-from navigator.router import router as navigator_router
 
-load_dotenv()
 
 from yt_trends_utils import get_recent_video_captions, get_google_trends_for_india
 
@@ -56,6 +63,9 @@ from fastapi import APIRouter
 
 
 from news_rss_service import get_google_business_news
+
+from navigator.router import router as navigator_router
+
 
 
 
@@ -293,9 +303,18 @@ app.add_middleware(
 
 # MongoDB setup for URL shortening. Navigator reuses the same Atlas cluster
 # through MONGODB_URI, but selects MONGODB_DATABASE for its own collections.
+
 MONGO_URI = os.getenv("MONGO_URI") or os.getenv("MONGODB_URI")
+
+print(f"[Config] .env file exists: {(BASE_DIR / '.env').is_file()}")
+print(f"[Config] MongoDB URI configured: {bool(MONGO_URI)}")
+
 if not MONGO_URI:
-    raise RuntimeError("MONGO_URI or MONGODB_URI must be configured in .env")
+    raise RuntimeError(
+        "MONGO_URI or MONGODB_URI is missing. "
+        "Check .env loading or Render Environment variables."
+    )
+
 try:
     client = MongoClient(MONGO_URI, serverSelectionTimeoutMS=5000)  # Update with your connection string
     db = client["url_shortener"]

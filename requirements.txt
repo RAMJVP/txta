@@ -33,3 +33,4 @@ pytrends==4.9.2
 google-api-python-client==2.126.0
 yt-dlp>=2025.1.15
 python-dotenv
+pydantic-settings
