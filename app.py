@@ -1,5 +1,10 @@
 import os
+import re
+import yt_dlp
+from dotenv import load_dotenv
 from time import time
+
+from datetime import datetime, timedelta, timezone
 from fastapi import FastAPI, HTTPException, Form, BackgroundTasks, File, UploadFile, Request, Query
 from fastapi.responses import StreamingResponse, RedirectResponse
 from fastapi.middleware.cors import CORSMiddleware
@@ -7,6 +12,7 @@ from gtts import gTTS
 from threading import Lock
 import yfinance as yf
 from pymongo import MongoClient
+from motor.motor_asyncio import AsyncIOMotorClient
 import shortuuid
 from ocr_service import extract_text_from_image
 from PyPDF2 import PdfReader  # Add this import for PDF processing
@@ -23,6 +29,9 @@ from fastapi.staticfiles import StaticFiles
 from imagecloud.image_cloud_api import (
     router as image_cloud_router,
 )
+from navigator.router import router as navigator_router
+
+load_dotenv()
 
 from yt_trends_utils import get_recent_video_captions, get_google_trends_for_india
 
@@ -201,6 +210,57 @@ app = FastAPI()
 
 
 # ---------------------------------------------------------
+# Knowledge Navigator MongoDB
+# ---------------------------------------------------------
+
+app.state.db = None
+app.state.navigator_mongo_client = None
+
+
+@app.on_event("startup")
+async def initialize_navigator_database() -> None:
+    mongodb_uri = os.getenv("MONGODB_URI") or os.getenv("MONGO_URI")
+    database_name = os.getenv("MONGODB_DATABASE", "infopic")
+
+    if not mongodb_uri:
+        raise RuntimeError(
+            "MONGODB_URI or MONGO_URI is missing from the root .env file"
+        )
+
+    navigator_client = AsyncIOMotorClient(
+        mongodb_uri,
+        serverSelectionTimeoutMS=5000,
+    )
+
+    try:
+        # Confirm Atlas is reachable before marking Navigator ready.
+        await navigator_client.admin.command("ping")
+    except Exception:
+        navigator_client.close()
+        raise
+
+    app.state.navigator_mongo_client = navigator_client
+    app.state.db = navigator_client[database_name]
+
+    print(f"[Navigator] Connected to MongoDB database: {database_name}")
+
+
+@app.on_event("shutdown")
+async def close_navigator_database() -> None:
+    navigator_client = getattr(
+        app.state,
+        "navigator_mongo_client",
+        None,
+    )
+
+    if navigator_client is not None:
+        navigator_client.close()
+        app.state.navigator_mongo_client = None
+        app.state.db = None
+        print("[Navigator] MongoDB connection closed")
+
+
+# ---------------------------------------------------------
 # Image Cloud
 # ---------------------------------------------------------
 
@@ -231,8 +291,11 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# MongoDB setup for URL shortening
-MONGO_URI = "mongodb+srv://jeevanpatel:T2JU3z0R5CIl4fZd@cluster0.5mr34.mongodb.net/?retryWrites=true&w=majority"
+# MongoDB setup for URL shortening. Navigator reuses the same Atlas cluster
+# through MONGODB_URI, but selects MONGODB_DATABASE for its own collections.
+MONGO_URI = os.getenv("MONGO_URI") or os.getenv("MONGODB_URI")
+if not MONGO_URI:
+    raise RuntimeError("MONGO_URI or MONGODB_URI must be configured in .env")
 try:
     client = MongoClient(MONGO_URI, serverSelectionTimeoutMS=5000)  # Update with your connection string
     db = client["url_shortener"]
@@ -495,8 +558,8 @@ async def preorder_stocks(current_time: str = Query(default=datetime.now().strft
         
 
 
-API_KEY = "n6b5ozc4aoq2dfp9"          # replace with actual
-API_SECRET = "dq9sbkgnlwt2qk52kfrbii7e1h5s19by"    # replace with actual
+API_KEY = os.getenv("KITE_API_KEY", "")
+API_SECRET = os.getenv("KITE_API_SECRET", "")
 
 kite = KiteConnect(api_key=API_KEY)
 access_token_global = None
@@ -829,6 +892,166 @@ def fetch_youtube_captions_by_channel(
         return {"status": "error", "message": str(e)}
 
 
+
+@app.get("/api/stock-market-youtube")
+def stock_market_youtube(
+    max_results: int = Query(default=20, ge=1, le=50),
+    hours: int = Query(default=24, ge=1, le=168),
+    query: str = Query(
+        default="Nifty Sensex stock market India",
+        min_length=2,
+        max_length=150,
+    ),
+):
+    try:
+        search_limit = min(max_results * 4, 100)
+        search_query = (
+            f"ytsearch{search_limit}:{query} stock market news India"
+        )
+
+        options = {
+            "quiet": True,
+            "no_warnings": True,
+            "skip_download": True,
+            "extract_flat": True,
+            "ignoreerrors": True,
+            "noplaylist": True,
+        }
+
+        with yt_dlp.YoutubeDL(options) as ydl:
+            result = ydl.extract_info(
+                search_query,
+                download=False,
+            )
+
+        entries = (result or {}).get("entries") or []
+
+        stock_terms = (
+            "stock market", "share market", "nifty", "sensex",
+            "banknifty", "bank nifty", "market outlook",
+            "market analysis", "market crash", "market rally",
+            "stock news", "stocks to buy", "intraday",
+            "trading", "ipo", "fii", "dii", "indian stocks",
+            "equity market", "market today", "options trading",
+        )
+
+        cutoff = datetime.now(timezone.utc) - timedelta(hours=hours)
+        videos = []
+        seen = set()
+        rejected_irrelevant = 0
+        rejected_old = 0
+        unknown_publish_date = 0
+
+        for item in entries:
+            if not isinstance(item, dict):
+                continue
+
+            title = str(item.get("title") or "").strip()
+            channel = str(
+                item.get("channel")
+                or item.get("uploader")
+                or ""
+            ).strip()
+
+            if not title:
+                continue
+
+            title_lower = title.casefold()
+            channel_lower = channel.casefold()
+
+            relevant_title = any(
+                term in title_lower for term in stock_terms
+            )
+
+            relevant_channel = any(
+                term in channel_lower
+                for term in (
+                    "stock", "trading", "finance", "investing",
+                    "moneycontrol", "cnbc", "economic times",
+                )
+            )
+
+            if not relevant_title and not (
+                relevant_channel
+                and any(
+                    term in title_lower
+                    for term in (
+                        "market", "nifty", "sensex", "stocks",
+                        "shares", "trading", "ipo",
+                    )
+                )
+            ):
+                rejected_irrelevant += 1
+                continue
+
+            video_id = str(item.get("id") or "")
+
+            if not re.fullmatch(r"[A-Za-z0-9_-]{11}", video_id):
+                continue
+
+            if video_id in seen:
+                continue
+
+            upload_date = item.get("upload_date")
+            published = None
+
+            if upload_date:
+                try:
+                    published_dt = datetime.strptime(
+                        str(upload_date), "%Y%m%d"
+                    ).replace(tzinfo=timezone.utc)
+
+                    published = published_dt.isoformat()
+
+                    if published_dt < cutoff:
+                        rejected_old += 1
+                        continue
+                except (ValueError, TypeError):
+                    unknown_publish_date += 1
+            else:
+                unknown_publish_date += 1
+
+            seen.add(video_id)
+
+            videos.append({
+                "title": title,
+                "channel": channel,
+                "video_id": video_id,
+                "url": (
+                    f"https://www.youtube.com/watch?v={video_id}"
+                ),
+                "published": published,
+                "upload_date": upload_date,
+                "captions": "",
+                "transcript_status": "not_fetched",
+            })
+
+            if len(videos) >= max_results:
+                break
+
+        return {
+            "status": "success",
+            "query": query,
+            "hours": hours,
+            "count": len(videos),
+            "videos": videos,
+            "source": "youtube-search-via-yt-dlp",
+            "diagnostics": {
+                "search_results_received": len(entries),
+                "irrelevant_results_rejected": rejected_irrelevant,
+                "older_results_rejected": rejected_old,
+                "videos_with_unknown_publish_date": unknown_publish_date,
+            },
+        }
+
+    except HTTPException:
+        raise
+    except Exception as exc:
+        print(f"[stock-market-youtube] Search failed: {exc}")
+        raise HTTPException(
+            status_code=502,
+            detail=f"YouTube search failed: {str(exc)}",
+        )
 
 
 @app.get("/api/event-calendar", response_model=list[CalendarEvent])
@@ -1202,3 +1425,6 @@ app.include_router(router, prefix="/api")
 # Registers the Image Cloud API router
 # Its prefix is already "/api/image-cloud"
 app.include_router(image_cloud_router)
+
+# Registers the Knowledge Navigator routes under /api/navigator.
+app.include_router(navigator_router)
