@@ -8,14 +8,10 @@ from pathlib import Path
 BASE_DIR = Path(__file__).resolve().parent
 load_dotenv(BASE_DIR / ".env", override=False)
 
-
-
-
 from time import time
-
 from datetime import datetime, timedelta, timezone
 from fastapi import FastAPI, HTTPException, Form, BackgroundTasks, File, UploadFile, Request, Query
-from fastapi.responses import StreamingResponse, RedirectResponse
+from fastapi.responses import StreamingResponse, RedirectResponse, FileResponse
 from fastapi.middleware.cors import CORSMiddleware
 from gtts import gTTS
 from threading import Lock
@@ -24,22 +20,14 @@ from pymongo import MongoClient
 from motor.motor_asyncio import AsyncIOMotorClient
 import shortuuid
 from ocr_service import extract_text_from_image
-from PyPDF2 import PdfReader  # Add this import for PDF processing
-from typing import List
-from datetime import datetime
+from PyPDF2 import PdfReader
+from typing import List, Literal, Optional
 from zoneinfo import ZoneInfo
 
 from pydantic import BaseModel
-from typing import Literal
-from typing import List
-from pathlib import Path
 from fastapi.staticfiles import StaticFiles
 
-from imagecloud.image_cloud_api import (
-    router as image_cloud_router,
-)
-
-
+from imagecloud.image_cloud_api import router as image_cloud_router
 from yt_trends_utils import get_recent_video_captions, get_google_trends_for_india
 
 import pandas as pd
@@ -48,26 +36,16 @@ import numpy as np
 import requests
 import pytz
 from datetime import date
-from datetime import datetime, timedelta
-
-
-
-
-
 import json
 import random
 from fastapi.responses import JSONResponse
-import time
 
 from fastapi import APIRouter
-
-
 from news_rss_service import get_google_business_news
-
 from navigator.router import router as navigator_router
 
-
-
+# Import our new long audio generator service
+from tts_service import convert_text_to_audio_long
 
 class AlertRequest(BaseModel):
     event: str
@@ -78,9 +56,6 @@ class AlertRequest(BaseModel):
 
 ALERT_FILE = "alerts.json"
 
-
-
-
 rbi_dates = [
     "2015-01-15", "2015-06-02", "2016-02-02", "2016-04-05", "2017-02-08",
     "2017-04-06", "2018-02-07", "2018-06-06", "2019-02-07", "2019-08-07",
@@ -88,22 +63,13 @@ rbi_dates = [
     "2022-06-08", "2023-02-08", "2023-06-08", "2024-02-08"
 ]
 
-
-
-
-
-
-
 router = APIRouter()
 
 SECTORS = {
     "IT": "INFY.NS",
     "Finance": "HDFCBANK.NS",
-    "Nifty": "NIFTYBEES.NS",  # ✅ Reliable ETF proxy
+    "Nifty": "NIFTYBEES.NS",
 }
-
-
-
 
 EVENTS = [
     {"name": "Budget 2024", "date": "2024-02-01"},
@@ -118,10 +84,7 @@ INTERVALS = {
     "day_15": 15
 }
 
-    
 SAVE_FILE = "saved_inputs.json"
-
-
 
 class SimRequest(BaseModel):
     startYear: int
@@ -142,7 +105,6 @@ class PatternOutput(BaseModel):
     confidence: float
     reason: str
 
-
 class StrategyInput(BaseModel):
     nifty: float
     rsi: float
@@ -158,11 +120,10 @@ class InputData(BaseModel):
     nifty: float
     rsi: float
     vix: float
-    oiChange: float = 1.4  # Add this line
-    
-    
+    oiChange: float = 1.4
+
 class OutputData(BaseModel):
-    signal: str
+    signal: Literal["BUY CE", "BUY PE", "STRADDLE", "AVOID"]
     confidence: float
     reason: str
 
@@ -182,42 +143,25 @@ class BacktestResponse(BaseModel):
     avg_return: float
     total_return: float
 
-# Sample rule-based event calendar
-EVENTS = [
-    {"date": "2025-06-13", "event": "Weekly Expiry", "impact": "High"},
-    {"date": "2025-06-15", "event": "Fed Interest Rate Decision", "impact": "High"},
-    {"date": "2025-06-18", "event": "India GDP Data", "impact": "Medium"},
-    {"date": "2025-07-01", "event": "Union Budget", "impact": "Very High"},
-    {"date": "2025-07-15", "event": "General Elections Result Day", "impact": "Extreme"},
-]
-
 class CalendarEvent(BaseModel):
     date: str
     event: str
     impact: str
 
-
-
-class OutputData(BaseModel):
-    signal: Literal["BUY CE", "BUY PE", "STRADDLE", "AVOID"]
-    confidence: float
-    reason: str
-
-class OHLCVInput(BaseModel):
-    data: list  # list of dicts: [{"timestamp": ..., "open": 21500 "high": ..., "low": ..., "close": ..., "volume": ...}] # Not used, but required for POST schema compatibility
-
-
-
 class OHLCVInput(BaseModel):
     data: list
-    
-    
+
+# Schema for the JSON-based long text-to-speech request
+class LongTextToAudioRequest(BaseModel):
+    text: str
+    voice: Optional[str] = "en-US-JennyNeural"
+    rate: Optional[str] = "+0%"
+    pitch: Optional[str] = "+0Hz"
 
 from kiteconnect import KiteConnect
 
 # Initialize FastAPI app
 app = FastAPI()
-
 
 # ---------------------------------------------------------
 # Knowledge Navigator MongoDB
@@ -227,15 +171,18 @@ app.state.db = None
 app.state.navigator_mongo_client = None
 
 
+ip_request_tracker = {}
+LOCAL_TZ = ZoneInfo("Asia/Kolkata")
+
+
+
 @app.on_event("startup")
 async def initialize_navigator_database() -> None:
     mongodb_uri = os.getenv("MONGODB_URI") or os.getenv("MONGO_URI")
     database_name = os.getenv("MONGODB_DATABASE", "infopic")
 
     if not mongodb_uri:
-        raise RuntimeError(
-            "MONGODB_URI or MONGO_URI is missing from the root .env file"
-        )
+        raise RuntimeError("MONGODB_URI or MONGO_URI is missing from the root .env file")
 
     navigator_client = AsyncIOMotorClient(
         mongodb_uri,
@@ -243,7 +190,6 @@ async def initialize_navigator_database() -> None:
     )
 
     try:
-        # Confirm Atlas is reachable before marking Navigator ready.
         await navigator_client.admin.command("ping")
     except Exception:
         navigator_client.close()
@@ -251,37 +197,26 @@ async def initialize_navigator_database() -> None:
 
     app.state.navigator_mongo_client = navigator_client
     app.state.db = navigator_client[database_name]
-
     print(f"[Navigator] Connected to MongoDB database: {database_name}")
-
 
 @app.on_event("shutdown")
 async def close_navigator_database() -> None:
-    navigator_client = getattr(
-        app.state,
-        "navigator_mongo_client",
-        None,
-    )
-
+    navigator_client = getattr(app.state, "navigator_mongo_client", None)
     if navigator_client is not None:
         navigator_client.close()
         app.state.navigator_mongo_client = None
         app.state.db = None
         print("[Navigator] MongoDB connection closed")
 
-
 # ---------------------------------------------------------
 # Image Cloud
 # ---------------------------------------------------------
 
 PROJECT_ROOT = Path(__file__).resolve().parent
-
 BRAHMA_FOLDER = PROJECT_ROOT / "brahma"
 
 if not BRAHMA_FOLDER.exists():
-    raise RuntimeError(
-        f"Image folder not found: {BRAHMA_FOLDER}"
-    )
+    raise RuntimeError(f"Image folder not found: {BRAHMA_FOLDER}")
 
 app.mount(
     "/imagecloud",
@@ -289,34 +224,21 @@ app.mount(
     name="imagecloud",
 )
 
-
-
-
-# Add CORS middleware
+# CORS middleware
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["http://localhost:8888", "https://admirable-smakager-729141.netlify.app","https://inspireme.in"],
+    allow_origins=["http://localhost:8888", "https://admirable-smakager-729141.netlify.app", "https://inspireme.in"],
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
 )
 
-# MongoDB setup for URL shortening. Navigator reuses the same Atlas cluster
-# through MONGODB_URI, but selects MONGODB_DATABASE for its own collections.
-
 MONGO_URI = os.getenv("MONGO_URI") or os.getenv("MONGODB_URI")
-
-print(f"[Config] .env file exists: {(BASE_DIR / '.env').is_file()}")
-print(f"[Config] MongoDB URI configured: {bool(MONGO_URI)}")
-
 if not MONGO_URI:
-    raise RuntimeError(
-        "MONGO_URI or MONGODB_URI is missing. "
-        "Check .env loading or Render Environment variables."
-    )
+    raise RuntimeError("MONGO_URI or MONGODB_URI is missing.")
 
 try:
-    client = MongoClient(MONGO_URI, serverSelectionTimeoutMS=5000)  # Update with your connection string
+    client = MongoClient(MONGO_URI, serverSelectionTimeoutMS=5000)
     db = client["url_shortener"]
     url_collection = db["urls"]
     print("Connected to MongoDB successfully.")
@@ -333,11 +255,9 @@ AUDIO_EXPIRY_TIME = 1800    # 30 minutes in seconds
 
 # === Helper Functions ===
 def cleanup_audio_file(file_path: str):
-    """Delete audio file after expiry."""
+    """Delete audio file after response transmission."""
     try:
         if os.path.exists(file_path):
-            with open(file_path, 'rb') as f:
-                pass  # Test if the file is accessible
             os.remove(file_path)
     except Exception as e:
         print(f"Error deleting file {file_path}: {e}")
@@ -346,7 +266,7 @@ def generate_short_url():
     """Generate a random short URL."""
     return shortuuid.ShortUUID().random(length=6)
 
-# === Audio Generation Endpoints ===
+# === Legacy Audio Generation Endpoint ===
 @app.post("/generate-audio/")
 async def generate_audio(device_id: str = Form(...), text: str = Form(...), background_tasks: BackgroundTasks = BackgroundTasks()):
     if not device_id.strip():
@@ -377,28 +297,96 @@ async def generate_audio(device_id: str = Form(...), text: str = Form(...), back
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Error processing your request: {e}")
 
-@app.post("/generate-audio-hin/")
-async def generate_audio_hindi(device_id: str = Form(...), text: str = Form(...), background_tasks: BackgroundTasks = BackgroundTasks()):
-    if not device_id.strip():
-        raise HTTPException(status_code=400, detail="Device ID is required")
-    if not text.strip():
-        raise HTTPException(status_code=400, detail="Text is required")
+# === NEW: Long Audio Generation Endpoint (Up to 30 mins) ===
+@app.post("/api/v1/long-text-to-audio")
+async def generate_long_audio(
+    payload: LongTextToAudioRequest,
+    request: Request,
+    background_tasks: BackgroundTasks
+):
+    """
+    Accepts long-form text, checks if the current time is between 1 PM and 3 PM,
+    ensures 1 conversion per IP per 24 hours, chunks text, and returns the MP3.
+    """
+    
+    # 1. Time restriction check (1:00 PM - 3:00 PM)
+    current_time_local = datetime.now(LOCAL_TZ)
+    current_hour = current_time_local.hour
+    current_minute = current_time_local.minute
+    
+    # Convert current time to total minutes past midnight for clean range comparison
+    current_minutes_total = current_hour * 60 + current_minute
+    start_allowed = 5 * 60  # 1:00 PM
+    end_allowed = 7 * 60    # 3:00 PM
+    
+    if not (start_allowed <= current_minutes_total <= end_allowed):
+        raise HTTPException(
+            status_code=403,
+            detail="Audio generation is only allowed between 1:00 PM and 3:00 PM."
+        )
+
+    # 2. IP / Machine restriction check (1 request per 24 hours)
+    client_ip = request.client.host if request.client else "unknown"
+    now_timestamp = time()
+    cooldown_period = 86400  # 24 hours in seconds
+
+    if client_ip in ip_request_tracker:
+        last_request_time = ip_request_tracker[client_ip]
+        if now_timestamp - last_request_time < cooldown_period:
+            remaining_hours = int((cooldown_period - (now_timestamp - last_request_time)) / 3600)
+            raise HTTPException(
+                status_code=429,
+                detail=f"Rate limit exceeded. You are allowed only 1 conversion per 24 hours. Try again in about {remaining_hours} hours."
+            )
+
+    # Update tracker for this IP
+    ip_request_tracker[client_ip] = now_timestamp
+
+    # 3. Payload validation
+    cleaned_text = payload.text.strip()
+    if not cleaned_text:
+        raise HTTPException(status_code=400, detail="Text content cannot be empty.")
+
+    word_count = len(cleaned_text.split())
+    if word_count > 6000:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Text is too long ({word_count} words). Please limit to ~5,000 words (~30 minutes)."
+        )
+
+    temp_folder = Path("temp_audio")
+    temp_folder.mkdir(parents=True, exist_ok=True)
+    
+    unique_id = shortuuid.ShortUUID().random(length=8)
+    output_filename = f"speech_{unique_id}.mp3"
+    output_filepath = str(temp_folder / output_filename)
 
     try:
-        tts = gTTS(text, lang='hi')
-        audio_file = f"{device_id}_{int(time())}.mp3"
-        audio_path = os.path.join("temp_audio", audio_file)
-        os.makedirs("temp_audio", exist_ok=True)
-        tts.save(audio_path)
-        background_tasks.add_task(cleanup_audio_file, audio_path)
-        return StreamingResponse(
-            open(audio_path, "rb"),
+        await convert_text_to_audio_long(
+            text=cleaned_text,
+            output_filepath=output_filepath,
+            voice=payload.voice,
+            rate=payload.rate,
+            pitch=payload.pitch
+        )
+
+        background_tasks.add_task(cleanup_audio_file, output_filepath)
+
+        return FileResponse(
+            path=output_filepath,
             media_type="audio/mpeg",
-            headers={"Content-Disposition": f"attachment; filename={audio_file}"},
+            filename=output_filename
         )
     except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Error processing your request: {e}")
-
+        if os.path.exists(output_filepath):
+            cleanup_audio_file(output_filepath)
+        raise HTTPException(status_code=500, detail=f"Failed to synthesize audio: {str(e)}")
+        
+        
+        
+        
+        
+        
 # === Text Extraction Endpoint ===
 @app.post("/extract-text/")
 async def extract_text(file: UploadFile = File(...)):
