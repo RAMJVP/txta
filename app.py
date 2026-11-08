@@ -316,13 +316,13 @@ async def generate_long_audio(
     
     # Convert current time to total minutes past midnight for clean range comparison
     current_minutes_total = current_hour * 60 + current_minute
-    start_allowed = 5 * 60  # 1:00 PM
-    end_allowed = 7 * 60    # 3:00 PM
+    start_allowed = 17 * 60  # 1:00 PM
+    end_allowed = 19 * 60    # 3:00 PM
     
     if not (start_allowed <= current_minutes_total <= end_allowed):
         raise HTTPException(
             status_code=403,
-            detail="Audio generation is only allowed between 1:00 PM and 3:00 PM."
+            detail="Audio generation is only allowed between 5:00 PM and 7:00 PM."
         )
 
     # 2. IP / Machine restriction check (1 request per 24 hours)
